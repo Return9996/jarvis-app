@@ -1,0 +1,76 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Read versionCode
+        id: ver
+        run: echo "code=$(node -p "require('./app.json').expo.android.versionCode")" >> "$GITHUB_OUTPUT"
+
+      - name: Expo prebuild (Android)
+        run: npx expo prebuild --platform android --no-install
+        env:
+          EXPO_NO_TELEMETRY: '1'
+
+      - name: Build release APK
+        run: |
+          chmod +x android/gradlew
+          cd android && ./gradlew assembleRelease --no-daemon
+
+      - name: Zipalign & sign
+        run: |
+          BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          echo "Build-tools: $BT"
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          [ -f "$APK" ] || APK=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > jarvis.keystore
+          "$ANDROID_HOME/build-tools/$BT/zipalign" -f 4 "$APK" aligned.apk
+          "$ANDROID_HOME/build-tools/$BT/apksigner" sign \
+            --ks jarvis.keystore \
+            --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
+            --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            --out "jarvis-v${{ steps.ver.outputs.code }}.apk" aligned.apk
+          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --print-certs "jarvis-v${{ steps.ver.outputs.code }}.apk"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-apk
+          path: jarvis-v*.apk
+
+      - name: Publish to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: jarvis-v${{ steps.ver.outputs.code }}.apk
+          name: Jarvis v${{ steps.ver.outputs.code }}
+          body: |
+            Jarvis Android-app v${{ steps.ver.outputs.code }}.
+            Installeer de bijgevoegde APK (sideload). De app werkt zichzelf voortaan bij naar nieuwere releases.
