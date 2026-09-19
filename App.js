@@ -6,7 +6,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import { WebView } from 'react-native-webview';
 import { SERVER } from './src/config';
 import { startNotifyService, testNotification } from './src/notify';
-import { checkForUpdate } from './src/update';
+import { startUpdateWatcher } from './src/update';
 import { ensurePermissions } from './src/permissions';
 import { getFlags, setFlag } from './src/flags';
 
@@ -19,6 +19,7 @@ function JarvisApp() {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    let cleanupUpdate = () => {};
     (async () => {
       const ok = await ensurePermissions();
       await startNotifyService().catch(() => {});
@@ -26,13 +27,13 @@ function JarvisApp() {
         const flags = await getFlags();
         if (!flags.welcomed) { await setFlag('welcomed', true); testNotification().catch(() => {}); }
       }
-      checkForUpdate().catch(() => {});
+      cleanupUpdate = startUpdateWatcher(); // checkt nu + bij elke keer dat de app op de voorgrond komt
     })();
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (canGoBack.current && webRef.current) { webRef.current.goBack(); return true; }
       return false;
     });
-    return () => sub.remove();
+    return () => { sub.remove(); cleanupUpdate(); };
   }, []);
 
   // Dark inset-vlakken (status-/navigatiebalk) zodat de PWA-menubalk niet meer wegvalt.
