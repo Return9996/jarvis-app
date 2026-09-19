@@ -10,6 +10,7 @@ const PERMISSIONS = [
   'android.permission.WAKE_LOCK',
   'android.permission.REQUEST_INSTALL_PACKAGES',
   'android.permission.RECEIVE_BOOT_COMPLETED',
+  'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
 ];
 
 module.exports = function withJarvisAndroid(config) {

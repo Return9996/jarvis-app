@@ -1,22 +1,33 @@
-// Jarvis native wrapper: laadt de bestaande PWA in een full-screen WebView. De achtergrond-service
-// (meldingen) en de zelf-update-check starten bij het opstarten.
+// Jarvis native wrapper: laadt de PWA in een full-screen WebView, met correcte safe-area-insets
+// (edge-to-edge op Android 15+), de achtergrond-meldingsservice en de zelf-update-check.
 import React, { useRef, useEffect, useState } from 'react';
 import { BackHandler, StyleSheet, View, Platform, StatusBar, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { SERVER } from './src/config';
-import { startNotifyService } from './src/notify';
+import { startNotifyService, testNotification } from './src/notify';
 import { checkForUpdate } from './src/update';
+import { ensurePermissions } from './src/permissions';
+import { getFlags, setFlag } from './src/flags';
 
 const BG = '#0a0f14';
 
-export default function App() {
+function JarvisApp() {
+  const insets = useSafeAreaInsets();
   const webRef = useRef(null);
   const canGoBack = useRef(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    startNotifyService().catch(() => {});
-    checkForUpdate().catch(() => {});
+    (async () => {
+      const ok = await ensurePermissions();
+      await startNotifyService().catch(() => {});
+      if (ok) {
+        const flags = await getFlags();
+        if (!flags.welcomed) { await setFlag('welcomed', true); testNotification().catch(() => {}); }
+      }
+      checkForUpdate().catch(() => {});
+    })();
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (canGoBack.current && webRef.current) { webRef.current.goBack(); return true; }
       return false;
@@ -24,8 +35,11 @@ export default function App() {
     return () => sub.remove();
   }, []);
 
+  // Dark inset-vlakken (status-/navigatiebalk) zodat de PWA-menubalk niet meer wegvalt.
+  const pad = { paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right };
+
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, pad]}>
       <StatusBar barStyle="light-content" backgroundColor={BG} />
       {failed ? (
         <View style={styles.center}>
@@ -40,7 +54,6 @@ export default function App() {
           source={{ uri: SERVER }}
           onNavigationStateChange={(s) => { canGoBack.current = s.canGoBack; }}
           onError={() => setFailed(true)}
-          onHttpError={() => {}}
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
           domStorageEnabled
@@ -51,9 +64,7 @@ export default function App() {
           originWhitelist={['https://*', 'http://*']}
           setSupportMultipleWindows={false}
           style={styles.web}
-          renderLoading={() => (
-            <View style={styles.center}><ActivityIndicator size="large" color="#22d3ee" /></View>
-          )}
+          renderLoading={() => (<View style={styles.center}><ActivityIndicator size="large" color="#22d3ee" /></View>)}
           startInLoadingState
         />
       )}
@@ -61,8 +72,16 @@ export default function App() {
   );
 }
 
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <JarvisApp />
+    </SafeAreaProvider>
+  );
+}
+
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: BG, paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 },
+  root: { flex: 1, backgroundColor: BG },
   web: { flex: 1, backgroundColor: BG },
   center: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: BG },
   msg: { color: '#d7e3ee', textAlign: 'center', fontSize: 16, marginBottom: 18 },
