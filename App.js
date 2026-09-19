@@ -12,6 +12,25 @@ import { getFlags, setFlag } from './src/flags';
 
 const BG = '#0a0f14';
 
+// Vergrendelt de viewport in de WebView: geen pinch-/dubbeltik-zoom en geen overscroll, zodat de
+// header en het schrijfvak niet kunnen verschuiven. Draait vóór en na het laden van de pagina.
+const LOCK_JS = `
+(function(){
+  try {
+    var apply = function(){
+      var m = document.querySelector('meta[name=viewport]');
+      if(!m){ m = document.createElement('meta'); m.setAttribute('name','viewport'); (document.head||document.documentElement).appendChild(m); }
+      m.setAttribute('content','width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover');
+      var de = document.documentElement; if(de){ de.style.overscrollBehavior='none'; de.style.touchAction='pan-x pan-y'; }
+      if(document.body){ document.body.style.overscrollBehavior='none'; }
+    };
+    apply();
+    document.addEventListener('DOMContentLoaded', apply);
+    document.addEventListener('gesturestart', function(e){ e.preventDefault(); }, { passive:false });
+  } catch(e){}
+})(); true;
+`;
+
 function JarvisApp() {
   const insets = useSafeAreaInsets();
   const webRef = useRef(null);
@@ -61,7 +80,13 @@ function JarvisApp() {
           javaScriptEnabled
           mediaPlaybackRequiresUserAction={false}
           allowsInlineMediaPlayback
-          pullToRefreshEnabled
+          pullToRefreshEnabled={false}
+          overScrollMode="never"
+          bounces={false}
+          setBuiltInZoomControls={false}
+          setDisplayZoomControls={false}
+          injectedJavaScriptBeforeContentLoaded={LOCK_JS}
+          injectedJavaScript={LOCK_JS}
           originWhitelist={['https://*', 'http://*']}
           setSupportMultipleWindows={false}
           style={styles.web}
