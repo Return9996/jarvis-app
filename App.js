@@ -1,7 +1,7 @@
 // Jarvis native wrapper: laadt de PWA in een full-screen WebView, met correcte safe-area-insets
 // (edge-to-edge op Android 15+), de achtergrond-meldingsservice en de zelf-update-check.
 import React, { useRef, useEffect, useState } from 'react';
-import { BackHandler, StyleSheet, View, Platform, StatusBar, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
+import { BackHandler, StyleSheet, View, Platform, StatusBar, ActivityIndicator, Text, TouchableOpacity, Linking } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { SERVER } from './src/config';
@@ -89,6 +89,15 @@ function JarvisApp() {
           injectedJavaScript={LOCK_JS}
           originWhitelist={['https://*', 'http://*']}
           setSupportMultipleWindows={false}
+          onShouldStartLoadWithRequest={(req) => {
+            // Een WebView kan downloads niet zelf afhandelen -> naar de browser sturen,
+            // die het bestand netjes in Downloads zet.
+            if (req.url && req.url.indexOf('download=1') !== -1) {
+              Linking.openURL(req.url).catch(() => {});
+              return false;
+            }
+            return true;
+          }}
           style={styles.web}
           renderLoading={() => (<View style={styles.center}><ActivityIndicator size="large" color="#22d3ee" /></View>)}
           startInLoadingState
