@@ -24,6 +24,7 @@ let runnerStarted = false;
 let heartbeat = null;
 let appStateSub = null;
 let lastStatusAt = 0;
+let lastAlertNote = '';  // uitleg in de statusregel als een melding niet getoond kon worden
 let alertCount = 0;  // hoeveel meldingen de dienst heeft proberen te tonen (staat in de statusregel)
 const lastAlert = new Map(); // throttle-sleutel -> tijdstip
 
@@ -82,20 +83,46 @@ function reasonFor(ev) {
   return null;
 }
 
-async function showAlert(reason, sid) {
+// Waarom deze omweg: notifee kan een melding zonder klagen accepteren terwijl Android hem daarna
+// gewoon niet toont (geblokkeerd/gedempt kanaal). Daarom controleren we NA het tonen of de melding
+// echt in het meldingenscherm staat, en vallen we anders terug op het service-kanaal — dat kanaal
+// hoort bij de foreground-service en wordt door Android altijd weergegeven.
+async function displayOn(channelId, id, reason, sid, importance) {
   await notifee.displayNotification({
+    id,
     title: reason.title,
     body: reason.body,
     data: { url: sid ? `/?sid=${sid}` : '/' },
     android: {
-      channelId: ALERT_CHANNEL,
-      importance: AndroidImportance.HIGH,
+      channelId,
+      importance,
       visibility: AndroidVisibility.PUBLIC,
       smallIcon: 'ic_launcher',
       pressAction: { id: 'open', launchActivity: 'default' },
       vibrationPattern: [200, 150, 200],
     },
   });
+}
+
+async function isDisplayed(id) {
+  try {
+    const shown = await notifee.getDisplayedNotifications();
+    return shown.some((n) => n.id === id || (n.notification && n.notification.id === id));
+  } catch { return true; } // kunnen we het niet nagaan, dan niet nodeloos dubbel melden
+}
+
+async function showAlert(reason, sid) {
+  const id = `jarvis-alert-${Date.now()}`;
+  await displayOn(ALERT_CHANNEL, id, reason, sid, AndroidImportance.HIGH);
+  if (await isDisplayed(id)) { lastAlertNote = ''; return; }
+  // Melding is stil verdwenen -> nog eens via het kanaal dat aantoonbaar wel doorkomt.
+  await displayOn(SERVICE_CHANNEL, `${id}-fb`, reason, sid, AndroidImportance.DEFAULT);
+  const ok = await isDisplayed(`${id}-fb`);
+  let blocked = '?';
+  try { const ch = await notifee.getChannel(ALERT_CHANNEL); blocked = ch ? String(!!ch.blocked) : 'ontbreekt'; } catch {}
+  lastAlertNote = ok
+    ? ` · meldingskanaal geweigerd (blocked=${blocked}), via achtergrondkanaal getoond`
+    : ` · Android weigert beide kanalen (blocked=${blocked})`;
 }
 
 // Losse testmelding (via de alerts-kanaal) om te bevestigen dat meldingen aankomen.
@@ -121,7 +148,7 @@ function markAlive(force = false) {
   // app wel iets ziet, dan bereikt het event de dienst niet; loopt hij op zonder dat je een melding
   // krijgt, dan blokkeert Android de weergave.
   const extra = alertCount ? ` · ${alertCount} melding${alertCount === 1 ? '' : 'en'}` : '';
-  setStatus(`Verbonden — laatste contact ${hhmm(now)}${extra}`);
+  setStatus(`Verbonden — laatste contact ${hhmm(now)}${extra}${lastAlertNote}`);
 }
 
 // Hartslag: tast elke 30s de verbinding af. Een socket die op een telefoon stilletjes is gestorven
