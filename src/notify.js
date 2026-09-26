@@ -9,6 +9,12 @@ import { AppState } from 'react-native';
 import { SERVER, WS_URL, COOKIE_NAME } from './config';
 
 const FGS_ID = 'jarvis-fgs';
+// Android-meldingskanalen zijn ONVERANDERLIJK: is een kanaal eenmaal door de gebruiker (of door een
+// "Blokkeren"-knop op een melding) uitgezet, dan krijgt de app het nooit meer aan — createChannel doet
+// dan niets en displayNotification verdwijnt geruisloos. Het kanaal-id draagt daarom een versienummer;
+// bij twijfel verhogen we dat, dan is het kanaal weer vers en actief.
+const ALERT_CHANNEL = 'jarvis-alerts-v2';
+const SERVICE_CHANNEL = 'jarvis-service';
 const HEARTBEAT_MS = 30000;   // hoe vaak we de verbinding aftasten én de status-tijd verversen
 const THROTTLE_MS = 60000;    // max 1 melding per sessie+type (zelfde regel als lib/push.js)
 let ws = null;
@@ -18,6 +24,7 @@ let runnerStarted = false;
 let heartbeat = null;
 let appStateSub = null;
 let lastStatusAt = 0;
+let alertCount = 0;  // hoeveel meldingen de dienst heeft proberen te tonen (staat in de statusregel)
 const lastAlert = new Map(); // throttle-sleutel -> tijdstip
 
 async function cookieHeader() {
@@ -36,7 +43,7 @@ async function setStatus(body) {
       title: 'Jarvis luistert mee',
       body,
       android: {
-        channelId: 'jarvis-service',
+        channelId: SERVICE_CHANNEL,
         asForegroundService: true,
         ongoing: true,
         importance: AndroidImportance.LOW,
@@ -81,7 +88,7 @@ async function showAlert(reason, sid) {
     body: reason.body,
     data: { url: sid ? `/?sid=${sid}` : '/' },
     android: {
-      channelId: 'jarvis-alerts',
+      channelId: ALERT_CHANNEL,
       importance: AndroidImportance.HIGH,
       visibility: AndroidVisibility.PUBLIC,
       smallIcon: 'ic_launcher',
@@ -110,7 +117,11 @@ function markAlive(force = false) {
   // hoeft niet bij elk event herschreven te worden.
   if (!force && now - lastStatusAt < 20000) return;
   lastStatusAt = now;
-  setStatus(`Verbonden — laatste contact ${hhmm(now)}`);
+  // De teller maakt zichtbaar of de dienst een melding WILDE tonen. Blijft hij op 0 terwijl je in de
+  // app wel iets ziet, dan bereikt het event de dienst niet; loopt hij op zonder dat je een melding
+  // krijgt, dan blokkeert Android de weergave.
+  const extra = alertCount ? ` · ${alertCount} melding${alertCount === 1 ? '' : 'en'}` : '';
+  setStatus(`Verbonden — laatste contact ${hhmm(now)}${extra}`);
 }
 
 // Hartslag: tast elke 30s de verbinding af. Een socket die op een telefoon stilletjes is gestorven
@@ -162,7 +173,13 @@ async function connect() {
     const now = Date.now();
     if (now - (lastAlert.get(key) || 0) < THROTTLE_MS) return;
     lastAlert.set(key, now);
-    showAlert(r, ev.sid).catch(() => {});
+    alertCount += 1;
+    markAlive(true);
+    // Een mislukte melding (geblokkeerd kanaal, ontbrekend icoon) verdween vroeger geruisloos in een
+    // lege catch. Nu schrijven we de reden in de blijvende statusmelding, want die is altijd zichtbaar.
+    showAlert(r, ev.sid).catch((err) => {
+      setStatus(`Melding kon niet getoond worden: ${(err && err.message) || err}`);
+    });
   };
   ws.onerror = () => {};
   ws.onclose = () => scheduleReconnect();
@@ -187,8 +204,11 @@ export function foregroundServiceRunner() {
 }
 
 export async function startNotifyService() {
-  await notifee.createChannel({ id: 'jarvis-alerts', name: 'Jarvis-meldingen', importance: AndroidImportance.HIGH, vibration: true });
-  await notifee.createChannel({ id: 'jarvis-service', name: 'Jarvis achtergrond', importance: AndroidImportance.LOW });
+  // Het oude kanaal kan door de gebruiker geblokkeerd zijn; dat is niet meer te herstellen, dus
+  // ruimen we het op zodat het niet als dode regel in de Android-instellingen blijft staan.
+  try { await notifee.deleteChannel('jarvis-alerts'); } catch { /* bestond niet */ }
+  await notifee.createChannel({ id: ALERT_CHANNEL, name: 'Jarvis-meldingen', importance: AndroidImportance.HIGH, vibration: true });
+  await notifee.createChannel({ id: SERVICE_CHANNEL, name: 'Jarvis achtergrond', importance: AndroidImportance.LOW });
   await setStatus('Verbinden met Jarvis…'); // start de foreground-service -> runner draait de WS-loop
 }
 
