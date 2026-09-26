@@ -99,7 +99,10 @@ async function displayOn(channelId, id, reason, sid, importance) {
       visibility: AndroidVisibility.PUBLIC,
       smallIcon: 'ic_launcher',
       pressAction: { id: 'open', launchActivity: 'default' },
-      vibrationPattern: [200, 150, 200],
+      // LET OP: notifee eist een EVEN aantal waarden (paren van wachten/trillen), elk groter dan 0.
+      // Een oneven reeks laat displayNotification falen en dan verdwijnt de melding zonder dat je
+      // er iets van ziet — dat was maandenlang de reden dat app-meldingen nooit aankwamen.
+      vibrationPattern: [300, 500],
     },
   });
 }
